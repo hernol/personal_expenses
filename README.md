@@ -12,6 +12,7 @@ Backend + dashboard FastAPI para analizar PDFs de resúmenes de tarjeta y decidi
 - Detecta streaming básico: Netflix, Amazon Prime, Disney+, Spotify, YouTube.
 - Muestra gráficos con Chart.js: gasto mensual y gasto por categoría.
 - Tiene AI Cost Optimizer con uso manual: costo mensual, días usados, costo por día usado y recomendación.
+- Incluye What-if simulator para marcar servicios a cancelar y calcular ahorro mensual/anual en USD y ARS.
 - Genera recomendaciones proactivas y preguntas pendientes por proveedor.
 - Rechaza PDFs escaneados/imagen-only con un error claro: necesitan OCR.
 
@@ -78,6 +79,14 @@ Cargar uso manual:
 curl -s -X POST http://127.0.0.1:8000/usage/manual \
   -H 'Content-Type: application/json' \
   -d '{"provider":"Cursor","days_used_per_month":3,"importance":"low","replacement":"ChatGPT"}' | python -m json.tool
+```
+
+Simular ahorro si cancelás providers:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/what-if \
+  -H 'Content-Type: application/json' \
+  -d '{"cancel_providers":["Cursor","Google AI/One"],"usd_to_ars_rate":1200}' | python -m json.tool
 ```
 
 ## Tests

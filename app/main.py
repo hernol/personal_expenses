@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.analysis import analyze_statement
 from app.models import AnalysisReport, Statement
 from app.parser import parse_statement_text
-from app.storage import analytics_summary, save_statement, save_usage
+from app.storage import analytics_summary, calculate_what_if, save_statement, save_usage
 
 app = FastAPI(
     title='Card Expense Analyzer',
@@ -24,6 +24,11 @@ class ManualUsageInput(BaseModel):
     importance: str = Field(pattern='^(low|medium|high)$')
     replacement: str | None = None
     notes: str | None = None
+
+
+class WhatIfInput(BaseModel):
+    cancel_providers: list[str] = Field(default_factory=list)
+    usd_to_ars_rate: float = Field(default=1200, ge=0)
 
 
 @app.get('/health')
@@ -55,6 +60,11 @@ def save_manual_usage(payload: ManualUsageInput) -> dict:
         replacement=payload.replacement.strip() if payload.replacement else None,
         notes=payload.notes,
     )
+
+
+@app.post('/what-if')
+def simulate_what_if(payload: WhatIfInput) -> dict:
+    return calculate_what_if(payload.cancel_providers, payload.usd_to_ars_rate)
 
 
 @app.post('/statements/analyze')
@@ -261,8 +271,16 @@ def _dashboard_html() -> str:
     </section>
 
     <section class="card" style="margin-top:18px">
+      <h2>What-if simulator</h2>
+      <p class="hint">Marcá servicios a cancelar y calculá ahorro mensual/anual. El tipo de cambio es editable para estimar equivalente ARS.</p>
+      <label>Tipo de cambio USD→ARS<input id="usd-rate" type="number" min="0" value="1200" /></label>
+      <button id="simulate-button">Simular ahorro</button>
+      <pre id="what-if-result">Elegí subscriptions de la tabla y simulá.</pre>
+    </section>
+
+    <section class="card" style="margin-top:18px">
       <h2>Top subscriptions</h2>
-      <table><thead><tr><th>Provider</th><th>Categoría</th><th>USD</th><th>ARS</th></tr></thead><tbody id="subscriptions"></tbody></table>
+      <table><thead><tr><th>Cancelar?</th><th>Provider</th><th>Categoría</th><th>USD</th><th>ARS</th></tr></thead><tbody id="subscriptions"></tbody></table>
     </section>
 
     <section class="card" style="margin-top:18px">
@@ -308,7 +326,7 @@ def _dashboard_html() -> str:
       document.querySelector('#recommendations').innerHTML = summary.recommendations.map(x => `<li>${x}</li>`).join('');
       document.querySelector('#questions').innerHTML = summary.proactive_questions.map(x => `<li><b>${x.provider}:</b> ${x.question}</li>`).join('');
       document.querySelector('#subscriptions').innerHTML = summary.top_subscriptions.map(x => `
-        <tr><td>${x.provider}</td><td>${x.category}</td><td>${money(x.monthly_cost_usd, 'USD')}</td><td>${money(x.monthly_cost_ars, 'ARS')}</td></tr>
+        <tr><td><input class="what-if-provider" type="checkbox" value="${x.provider}" /></td><td>${x.provider}</td><td>${x.category}</td><td>${money(x.monthly_cost_usd, 'USD')}</td><td>${money(x.monthly_cost_ars, 'ARS')}</td></tr>
       `).join('');
     }
 
@@ -335,6 +353,19 @@ def _dashboard_html() -> str:
         })
       });
       await refresh();
+    });
+
+    document.querySelector('#simulate-button').addEventListener('click', async () => {
+      const cancelProviders = [...document.querySelectorAll('.what-if-provider:checked')].map(input => input.value);
+      const result = await fetch('/what-if', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cancel_providers: cancelProviders,
+          usd_to_ars_rate: Number(document.querySelector('#usd-rate').value || 0),
+        })
+      }).then(r => r.json());
+      document.querySelector('#what-if-result').textContent = JSON.stringify(result, null, 2);
     });
 
     refresh();

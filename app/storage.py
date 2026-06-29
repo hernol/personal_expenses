@@ -172,6 +172,30 @@ def analytics_summary() -> dict[str, Any]:
     }
 
 
+def calculate_what_if(cancel_providers: list[str], usd_to_ars_rate: float) -> dict[str, Any]:
+    providers = [provider.strip() for provider in cancel_providers if provider.strip()]
+    top_subscriptions = analytics_summary()['top_subscriptions']
+    selected = [item for item in top_subscriptions if item['provider'] in providers]
+    selected.sort(key=lambda item: providers.index(item['provider']))
+
+    monthly_usd = round(sum(item['monthly_cost_usd'] for item in selected), 2)
+    monthly_ars_direct = round(sum(item['monthly_cost_ars'] for item in selected), 2)
+    monthly_ars_equivalent = round(monthly_ars_direct + monthly_usd * usd_to_ars_rate, 2)
+    annual_usd = round(monthly_usd * 12, 2)
+    annual_ars_equivalent = round(monthly_ars_equivalent * 12, 2)
+
+    return {
+        'cancel_providers': providers,
+        'usd_to_ars_rate': usd_to_ars_rate,
+        'monthly_savings_usd': monthly_usd,
+        'monthly_savings_ars': monthly_ars_direct,
+        'monthly_savings_ars_equivalent': monthly_ars_equivalent,
+        'annual_savings_usd': annual_usd,
+        'annual_savings_ars_equivalent': annual_ars_equivalent,
+        'items': selected,
+    }
+
+
 def _category_totals(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for row in rows:

@@ -81,7 +81,31 @@ def test_manual_usage_makes_ai_cost_optimizer_recommend_cancellation(tmp_path, m
     assert 'ChatGPT' in cursor['reason']
 
 
-def test_dashboard_serves_graphs_recommendations_and_usage_form(tmp_path, monkeypatch):
+def test_what_if_simulator_calculates_monthly_and_annual_savings(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    client = TestClient(app)
+    client.post(
+        '/statements/analyze',
+        files={'file': ('visa.pdf', sample_pdf_bytes(), 'application/pdf')},
+    )
+
+    response = client.post('/what-if', json={
+        'cancel_providers': ['Cursor', 'Google AI/One'],
+        'usd_to_ars_rate': 1200,
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['cancel_providers'] == ['Cursor', 'Google AI/One']
+    assert data['monthly_savings_usd'] == 201.99
+    assert data['monthly_savings_ars_equivalent'] == 242388.0
+    assert data['annual_savings_usd'] == 2423.88
+    assert data['annual_savings_ars_equivalent'] == 2908656.0
+    assert data['items'][0]['provider'] == 'Cursor'
+    assert data['items'][0]['monthly_cost_usd'] == 192.0
+
+
+def test_dashboard_serves_graphs_recommendations_usage_form_and_what_if_simulator(tmp_path, monkeypatch):
     monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
     client = TestClient(app)
 
@@ -90,6 +114,8 @@ def test_dashboard_serves_graphs_recommendations_and_usage_form(tmp_path, monkey
     assert response.status_code == 200
     assert 'Chart.js' in response.text
     assert 'AI Cost Optimizer' in response.text
+    assert 'What-if simulator' in response.text
     assert '/analytics/summary' in response.text
     assert '/usage/manual' in response.text
+    assert '/what-if' in response.text
     assert 'Recomendaciones proactivas' in response.text
