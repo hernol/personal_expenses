@@ -124,6 +124,24 @@ def test_analytics_ignores_legacy_usd_balance_when_statement_has_no_usd_transact
     assert summary['monthly_totals'][0]['usd_balance'] == 0
 
 
+def test_analytics_keeps_small_legacy_usd_balance_without_transactions(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    with connect() as conn:
+        conn.execute(
+            '''
+            INSERT INTO statements (filename, card_brand, closing_date, due_date, total_to_pay_ars, usd_balance, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            ('small-usd.pdf', 'MASTERCARD', '2026-03-30', None, 1000.0, 2.47, '2026-06-29T00:00:00Z'),
+        )
+        conn.commit()
+
+    summary = analytics_summary()
+
+    assert summary['totals']['usd_balance'] == 2.47
+    assert summary['monthly_totals'][0]['usd_balance'] == 2.47
+
+
 def test_dashboard_serves_graphs_recommendations_usage_form_and_what_if_simulator(tmp_path, monkeypatch):
     monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
     client = TestClient(app)
