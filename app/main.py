@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.analysis import analyze_statement
 from app.models import AnalysisReport, Statement
 from app.parser import parse_statement_text
-from app.storage import analytics_summary, calculate_what_if, delete_statement, list_statements, save_statement, save_usage
+from app.storage import analytics_summary, calculate_what_if, delete_all_statements, delete_statement, list_statements, save_statement, save_usage
 
 app = FastAPI(
     title='Card Expense Analyzer',
@@ -70,6 +70,12 @@ def simulate_what_if(payload: WhatIfInput) -> dict:
 @app.get('/statements')
 def get_statements() -> dict:
     return {'statements': list_statements()}
+
+
+@app.delete('/statements')
+def remove_all_statements() -> dict:
+    deleted_count = delete_all_statements()
+    return {'deleted': True, 'deleted_count': deleted_count}
 
 
 @app.delete('/statements/{statement_id}')
@@ -245,6 +251,7 @@ def _dashboard_html() -> str:
     <section class="card" style="margin-top:18px">
       <h2>Resúmenes cargados</h2>
       <p class="hint">Si un parseo quedó mal, borrá ese resumen y volvé a subir el PDF.</p>
+      <button id="delete-all-statements">Borrar todos</button>
       <table><thead><tr><th>ID</th><th>Archivo</th><th>Cierre</th><th>Transacciones</th><th>Total ARS</th><th></th></tr></thead><tbody id="statements"></tbody></table>
     </section>
 
@@ -381,6 +388,12 @@ def _dashboard_html() -> str:
           notes: document.querySelector('#notes').value || null,
         })
       });
+      await refresh();
+    });
+
+    document.querySelector('#delete-all-statements').addEventListener('click', async () => {
+      if (!confirm('¿Borrar TODOS los resúmenes parseados? Esta acción no borra tus PDFs originales, pero vas a tener que volver a subirlos.')) return;
+      await fetch('/statements', { method: 'DELETE' });
       await refresh();
     });
 

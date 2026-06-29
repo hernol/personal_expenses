@@ -135,6 +135,29 @@ def test_can_list_and_delete_parsed_statements_for_reupload(tmp_path, monkeypatc
     assert [item['filename'] for item in listed_after_delete['statements']] == ['bad-parse-b.pdf']
 
 
+def test_can_delete_all_parsed_statements_for_clean_reupload(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    client = TestClient(app)
+    pdf = sample_pdf_bytes()
+    client.post(
+        '/statements/analyze-batch',
+        files=[
+            ('files', ('bad-parse-a.pdf', pdf, 'application/pdf')),
+            ('files', ('bad-parse-b.pdf', pdf, 'application/pdf')),
+        ],
+    )
+
+    response = client.delete('/statements')
+
+    assert response.status_code == 200
+    assert response.json() == {'deleted': True, 'deleted_count': 2}
+    assert client.get('/statements').json() == {'statements': []}
+    summary = client.get('/analytics/summary').json()
+    assert summary['statement_count'] == 0
+    assert summary['totals']['total_to_pay_ars'] == 0
+    assert summary['totals']['usd_balance'] == 0
+
+
 def test_deleting_missing_statement_returns_404(tmp_path, monkeypatch):
     monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
     client = TestClient(app)
@@ -193,6 +216,7 @@ def test_dashboard_serves_graphs_recommendations_usage_form_and_what_if_simulato
     assert 'What-if simulator' in response.text
     assert 'Resúmenes cargados' in response.text
     assert 'Borrar' in response.text
+    assert 'Borrar todos' in response.text
     assert '/statements' in response.text
     assert '/analytics/summary' in response.text
     assert '/usage/manual' in response.text

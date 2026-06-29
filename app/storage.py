@@ -160,6 +160,15 @@ def delete_statement(statement_id: int) -> bool:
         return True
 
 
+def delete_all_statements() -> int:
+    with connect() as conn:
+        count = conn.execute('SELECT COUNT(*) FROM statements').fetchone()[0]
+        conn.execute('DELETE FROM transactions')
+        conn.execute('DELETE FROM statements')
+        conn.commit()
+        return int(count)
+
+
 def analytics_summary() -> dict[str, Any]:
     with connect() as conn:
         statements = conn.execute('SELECT * FROM statements ORDER BY closing_date, id').fetchall()
