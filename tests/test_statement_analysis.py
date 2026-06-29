@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import fitz
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -11,6 +12,18 @@ SAMPLE_PATH = Path('/home/hernol/3d0c3e4c-c901-479a-89a0-ebc2e2a92418.txt')
 
 def sample_text() -> str:
     return SAMPLE_PATH.read_text(encoding='utf-8')
+
+
+def sample_pdf_bytes() -> bytes:
+    doc = fitz.open()
+    lines = sample_text().splitlines()
+    for start in range(0, len(lines), 48):
+        page = doc.new_page(width=595, height=842)
+        y = 36
+        for line in lines[start:start + 48]:
+            page.insert_text((36, y), line or ' ', fontsize=8, fontname='courier')
+            y += 16
+    return doc.tobytes()
 
 
 def test_parse_extracts_purchase_transactions_from_messy_visa_text():
@@ -53,3 +66,32 @@ def test_api_upload_text_returns_report():
     assert data['summary']['usd_balance'] == 237.07
     assert data['categories'][0]['name'] == 'AI'
     assert data['categories'][0]['provider_count'] == 4
+
+
+def test_api_upload_pdf_returns_report_without_txt_conversion():
+    client = TestClient(app)
+    response = client.post(
+        '/statements/analyze',
+        files={'file': ('visa.pdf', sample_pdf_bytes(), 'application/pdf')},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['summary']['total_to_pay_ars'] == 224142.46
+    assert data['summary']['usd_balance'] == 237.07
+    assert data['categories'][0]['name'] == 'AI'
+    assert data['categories'][0]['provider_count'] == 4
+
+
+def test_api_rejects_scanned_or_image_only_pdf_with_clear_error():
+    client = TestClient(app)
+    doc = fitz.open()
+    doc.new_page(width=595, height=842)
+
+    response = client.post(
+        '/statements/analyze',
+        files={'file': ('scan.pdf', doc.tobytes(), 'application/pdf')},
+    )
+
+    assert response.status_code == 400
+    assert 'PDF no tiene texto extraíble' in response.json()['detail']

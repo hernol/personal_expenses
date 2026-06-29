@@ -46,12 +46,12 @@ def upload_ui() -> str:
   <main>
     <section class="card">
       <h1>Cargar resúmenes</h1>
-      <p>Subí todos los TXT exportados de tus tarjetas. Podés seleccionar varios meses y varias tarjetas a la vez.</p>
+      <p>Subí directamente los PDFs de tus tarjetas. Podés seleccionar varios meses y varias tarjetas a la vez.</p>
       <form id="form">
-        <input id="files" name="files" type="file" multiple accept=".txt,.pdf,text/plain,application/pdf" />
+        <input id="files" name="files" type="file" multiple accept=".pdf,application/pdf" />
         <button>Analizar gastos</button>
       </form>
-      <p class="hint">Hoy el parser está calibrado con tu resumen Visa en TXT. PDFs directos dependen de que el texto sea extraíble.</p>
+      <p class="hint">Funciona con PDFs que tengan texto seleccionable. Si el banco entrega un PDF escaneado como imagen, va a requerir OCR.</p>
       <h2>Resultado</h2>
       <pre id="out">Esperando archivos...</pre>
     </section>
@@ -155,7 +155,15 @@ def _extract_pdf_text(raw: bytes) -> str:
 
     try:
         doc = fitz.open(stream=raw, filetype='pdf')
-        return '\n'.join(page.get_text() for page in doc)
+        text = '\n'.join(page.get_text() for page in doc).strip()
+        if not text:
+            raise HTTPException(
+                status_code=400,
+                detail='PDF no tiene texto extraíble. Probablemente es un escaneo/imagen; hace falta OCR.',
+            )
+        return text
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail='No pude extraer texto del PDF.') from exc
 
