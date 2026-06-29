@@ -26,7 +26,7 @@ def parse_statement_text(text: str) -> Statement:
         closing_date=_find_closing_date(tokens),
         due_date=_find_due_date(tokens),
         total_to_pay_ars=_find_amount_after(tokens, 'TOTAL A PAGAR'),
-        usd_balance=_find_usd_balance(tokens),
+        usd_balance=_find_usd_balance(transactions),
         transactions=transactions,
     )
 
@@ -135,19 +135,12 @@ def _find_amount_after(tokens: list[str], label: str) -> float | None:
     return None
 
 
-def _find_usd_balance(tokens: list[str]) -> float | None:
-    # In these Visa extracts the reliable current USD balance is the amount shown
-    # immediately under the standalone DÓLARES label in the totals page, after
-    # TOTAL A PAGAR. Earlier DÓLARES labels belong to the previous-balance table.
-    start = tokens.index('TOTAL A PAGAR') if 'TOTAL A PAGAR' in tokens else 0
-    for i, token in enumerate(tokens[start:], start):
-        if token == 'DÓLARES':
-            for candidate in tokens[i + 1:i + 5]:
-                if _is_amount(candidate):
-                    value = _parse_amount(candidate)
-                    if value > 0:
-                        return value
-    usd_total = round(sum(tx.amount for tx in _parse_transactions(tokens) if tx.currency == Currency.USD), 2)
+def _find_usd_balance(transactions: list[Transaction]) -> float | None:
+    # Treat USD balance as the sum of parsed USD purchases. Do not read arbitrary
+    # DÓLARES labels elsewhere in the PDF: Mastercard/Visa summaries also use
+    # DÓLARES for credit limits or legal tables, which produced false values like
+    # 35.000,00 USD monthly spend.
+    usd_total = round(sum(tx.amount for tx in transactions if tx.currency == Currency.USD), 2)
     return usd_total or None
 
 

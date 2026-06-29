@@ -5,6 +5,7 @@ import fitz
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.storage import analytics_summary, connect
 
 SAMPLE_PATH = Path('/home/hernol/3d0c3e4c-c901-479a-89a0-ebc2e2a92418.txt')
 
@@ -103,6 +104,24 @@ def test_what_if_simulator_calculates_monthly_and_annual_savings(tmp_path, monke
     assert data['annual_savings_ars_equivalent'] == 2908656.0
     assert data['items'][0]['provider'] == 'Cursor'
     assert data['items'][0]['monthly_cost_usd'] == 192.0
+
+
+def test_analytics_ignores_legacy_usd_balance_when_statement_has_no_usd_transactions(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    with connect() as conn:
+        conn.execute(
+            '''
+            INSERT INTO statements (filename, card_brand, closing_date, due_date, total_to_pay_ars, usd_balance, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            ('bad-mastercard.pdf', 'MASTERCARD', '2026-04-30', None, 381948.90, 35000.0, '2026-06-29T00:00:00Z'),
+        )
+        conn.commit()
+
+    summary = analytics_summary()
+
+    assert summary['totals']['usd_balance'] == 0
+    assert summary['monthly_totals'][0]['usd_balance'] == 0
 
 
 def test_dashboard_serves_graphs_recommendations_usage_form_and_what_if_simulator(tmp_path, monkeypatch):

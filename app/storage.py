@@ -149,7 +149,16 @@ def analytics_summary() -> dict[str, Any]:
             '''
         ).fetchall()
         usage_rows = conn.execute('SELECT * FROM provider_usage').fetchall()
+        usd_balance_rows = conn.execute(
+            '''
+            SELECT statement_id, SUM(amount) AS usd_balance
+            FROM transactions
+            WHERE currency = 'USD'
+            GROUP BY statement_id
+            '''
+        ).fetchall()
 
+    usd_balance_by_statement = {row['statement_id']: round(row['usd_balance'] or 0, 2) for row in usd_balance_rows}
     usage_by_provider = {row['provider']: dict(row) for row in usage_rows}
     category_totals = _category_totals(category_rows)
     top_subscriptions = _top_subscriptions(category_rows)
@@ -161,9 +170,9 @@ def analytics_summary() -> dict[str, Any]:
         'statement_count': len(statements),
         'totals': {
             'total_to_pay_ars': round(sum(row['total_to_pay_ars'] or 0 for row in statements), 2),
-            'usd_balance': round(sum(row['usd_balance'] or 0 for row in statements), 2),
+            'usd_balance': round(sum(usd_balance_by_statement.get(row['id'], 0) for row in statements), 2),
         },
-        'monthly_totals': _monthly_totals(statements),
+        'monthly_totals': _monthly_totals(statements, usd_balance_by_statement),
         'category_totals': category_totals,
         'top_subscriptions': top_subscriptions,
         'ai_optimizer': ai_optimizer,
@@ -230,13 +239,13 @@ def _top_subscriptions(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     return sorted(result, key=lambda item: (-item['monthly_cost_usd'], -item['monthly_cost_ars']))
 
 
-def _monthly_totals(statements: list[sqlite3.Row]) -> list[dict[str, Any]]:
+def _monthly_totals(statements: list[sqlite3.Row], usd_balance_by_statement: dict[int, float]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for row in statements:
         month = (row['closing_date'] or row['created_at'])[:7]
         bucket = grouped.setdefault(month, {'month': month, 'total_to_pay_ars': 0.0, 'usd_balance': 0.0, 'statement_count': 0})
         bucket['total_to_pay_ars'] += row['total_to_pay_ars'] or 0
-        bucket['usd_balance'] += row['usd_balance'] or 0
+        bucket['usd_balance'] += usd_balance_by_statement.get(row['id'], 0)
         bucket['statement_count'] += 1
     result = list(grouped.values())
     for item in result:

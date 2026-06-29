@@ -56,6 +56,30 @@ def test_analysis_groups_ai_subscriptions_and_recommends_cuts():
     assert any('AI' in recommendation for recommendation in report.recommendations)
 
 
+def test_parser_does_not_treat_card_limit_as_usd_spend():
+    mastercard_like_text = '''
+Tarjeta Crédito MASTERCARD
+30-Abr-26
+TOTAL A PAGAR
+381.948,90
+LÍMITES
+DÓLARES
+35.000,00
+DETALLE DEL CONSUMO
+FECHA
+REFERENCIA
+PESOS
+TARJETA 1234 Total Consumos
+381.948,90
+'''
+
+    statement = parse_statement_text(mastercard_like_text)
+
+    assert statement.total_to_pay_ars == 381948.90
+    assert statement.usd_balance is None
+    assert statement.transactions == []
+
+
 def test_api_upload_text_returns_report():
     client = TestClient(app)
     response = client.post('/statements/analyze', files={'file': ('visa.txt', sample_text(), 'text/plain')})
