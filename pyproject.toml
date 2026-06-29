@@ -1,0 +1,23 @@
+[project]
+name = "card-expense-analyzer"
+version = "0.1.0"
+description = "Backend para analizar resúmenes de tarjeta y optimizar gastos"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.116.0",
+    "uvicorn[standard]>=0.35.0",
+    "pydantic>=2.11.0",
+    "python-multipart>=0.0.20",
+    "pymupdf>=1.28.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
