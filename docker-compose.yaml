@@ -4,6 +4,21 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.gzip.compress=true"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.personal-expenses-http.entryPoints=http"
+      - "traefik.http.routers.personal-expenses-http.middlewares=redirect-to-https"
+      - "traefik.http.routers.personal-expenses-http.rule=Host(`personal-expenses.178.156.165.130.sslip.io`) && PathPrefix(`/`)"
+      - "traefik.http.routers.personal-expenses-http.service=personal-expenses"
+      - "traefik.http.routers.personal-expenses-https.entryPoints=https"
+      - "traefik.http.routers.personal-expenses-https.middlewares=gzip"
+      - "traefik.http.routers.personal-expenses-https.rule=Host(`personal-expenses.178.156.165.130.sslip.io`) && PathPrefix(`/`)"
+      - "traefik.http.routers.personal-expenses-https.service=personal-expenses"
+      - "traefik.http.routers.personal-expenses-https.tls=true"
+      - "traefik.http.routers.personal-expenses-https.tls.certresolver=letsencrypt"
+      - "traefik.http.services.personal-expenses.loadbalancer.server.port=8000"
     healthcheck:
       test: ["CMD", "uv", "run", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
       interval: 30s
