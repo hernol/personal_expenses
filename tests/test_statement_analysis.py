@@ -80,6 +80,29 @@ TARJETA 1234 Total Consumos
     assert statement.transactions == []
 
 
+def test_parser_uses_small_dollar_balance_when_usd_rows_are_not_parsed():
+    statement_text = '''
+Tarjeta Crédito MASTERCARD
+30-Abr-26
+TOTAL A PAGAR
+381.948,90
+DÓLARES
+237,07
+DETALLE DEL CONSUMO
+FECHA
+REFERENCIA
+PESOS
+TARJETA 1234 Total Consumos
+381.948,90
+'''
+
+    statement = parse_statement_text(statement_text)
+
+    assert statement.total_to_pay_ars == 381948.90
+    assert statement.usd_balance == 237.07
+    assert statement.transactions == []
+
+
 def test_api_upload_text_returns_report():
     client = TestClient(app)
     response = client.post('/statements/analyze', files={'file': ('visa.txt', sample_text(), 'text/plain')})

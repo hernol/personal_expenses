@@ -26,7 +26,7 @@ def parse_statement_text(text: str) -> Statement:
         closing_date=_find_closing_date(tokens),
         due_date=_find_due_date(tokens),
         total_to_pay_ars=_find_amount_after(tokens, 'TOTAL A PAGAR'),
-        usd_balance=_find_usd_balance(transactions),
+        usd_balance=_find_usd_balance(transactions, tokens),
         transactions=transactions,
     )
 
@@ -135,13 +135,26 @@ def _find_amount_after(tokens: list[str], label: str) -> float | None:
     return None
 
 
-def _find_usd_balance(transactions: list[Transaction]) -> float | None:
-    # Treat USD balance as the sum of parsed USD purchases. Do not read arbitrary
-    # DÓLARES labels elsewhere in the PDF: Mastercard/Visa summaries also use
-    # DÓLARES for credit limits or legal tables, which produced false values like
-    # 35.000,00 USD monthly spend.
+def _find_usd_balance(transactions: list[Transaction], tokens: list[str]) -> float | None:
+    # Prefer parsed USD purchases when we have them.
     usd_total = round(sum(tx.amount for tx in transactions if tx.currency == Currency.USD), 2)
-    return usd_total or None
+    if usd_total:
+        return usd_total
+
+    # Fallback for banks/PDF layouts where USD detail rows are not parsed yet but
+    # the summary exposes a current dollar balance. Keep this deliberately
+    # conservative: values over 1000 are often credit limits (e.g. 35.000,00) or
+    # table artifacts, not monthly spend for this user's cards.
+    candidates: list[float] = []
+    for i, token in enumerate(tokens[:-1]):
+        if token == 'DÓLARES':
+            for candidate in tokens[i + 1:i + 4]:
+                if _is_amount(candidate):
+                    value = _parse_amount(candidate)
+                    if 0 < value <= 1000:
+                        candidates.append(value)
+                    break
+    return candidates[-1] if candidates else None
 
 
 def _is_amount(token: str) -> bool:
