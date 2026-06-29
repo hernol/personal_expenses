@@ -3,6 +3,10 @@ services:
     build: .
     container_name: personal-expenses
     restart: unless-stopped
+    environment:
+      CARD_EXPENSE_DB: /data/expenses.db
+    volumes:
+      - personal-expenses-data:/data
     ports:
       - "8000:8000"
     healthcheck:
@@ -11,3 +15,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  personal-expenses-data:

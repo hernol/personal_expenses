@@ -4,16 +4,26 @@ from collections import defaultdict
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
 from app.analysis import analyze_statement
-from app.models import AnalysisReport
+from app.models import AnalysisReport, Statement
 from app.parser import parse_statement_text
+from app.storage import analytics_summary, save_statement, save_usage
 
 app = FastAPI(
     title='Card Expense Analyzer',
     description='Analiza resúmenes de tarjeta para detectar suscripciones, providers de AI y gastos recortables.',
-    version='0.1.0',
+    version='0.2.0',
 )
+
+
+class ManualUsageInput(BaseModel):
+    provider: str = Field(min_length=1)
+    days_used_per_month: int = Field(ge=0, le=31)
+    importance: str = Field(pattern='^(low|medium|high)$')
+    replacement: str | None = None
+    notes: str | None = None
 
 
 @app.get('/health')
@@ -23,60 +33,38 @@ def health() -> dict[str, str]:
 
 @app.get('/', response_class=HTMLResponse)
 def upload_ui() -> str:
-    return '''<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Card Expense Analyzer</title>
-  <style>
-    body { font-family: Inter, system-ui, sans-serif; margin: 0; background: #0f172a; color: #e5e7eb; }
-    main { max-width: 980px; margin: 48px auto; padding: 0 24px; }
-    .card { background: #111827; border: 1px solid #334155; border-radius: 18px; padding: 28px; box-shadow: 0 20px 60px #0008; }
-    h1 { margin-top: 0; font-size: 34px; }
-    p { color: #cbd5e1; }
-    input, button { font-size: 16px; }
-    input[type=file] { display: block; width: 100%; padding: 18px; border: 1px dashed #64748b; border-radius: 14px; background: #020617; }
-    button { margin-top: 18px; padding: 12px 18px; border: 0; border-radius: 12px; background: #38bdf8; color: #082f49; font-weight: 800; cursor: pointer; }
-    pre { overflow: auto; background: #020617; border-radius: 14px; padding: 18px; border: 1px solid #334155; }
-    .hint { font-size: 14px; color: #94a3b8; }
-  </style>
-</head>
-<body>
-  <main>
-    <section class="card">
-      <h1>Cargar resúmenes</h1>
-      <p>Subí directamente los PDFs de tus tarjetas. Podés seleccionar varios meses y varias tarjetas a la vez.</p>
-      <form id="form">
-        <input id="files" name="files" type="file" multiple accept=".pdf,application/pdf" />
-        <button>Analizar gastos</button>
-      </form>
-      <p class="hint">Funciona con PDFs que tengan texto seleccionable. Si el banco entrega un PDF escaneado como imagen, va a requerir OCR.</p>
-      <h2>Resultado</h2>
-      <pre id="out">Esperando archivos...</pre>
-    </section>
-  </main>
-  <script>
-    const form = document.querySelector('#form');
-    const out = document.querySelector('#out');
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const data = new FormData();
-      for (const file of document.querySelector('#files').files) data.append('files', file);
-      out.textContent = 'Analizando...';
-      const response = await fetch('/statements/analyze-batch', { method: 'POST', body: data });
-      const json = await response.json();
-      out.textContent = JSON.stringify(json, null, 2);
-    });
-  </script>
-</body>
-</html>'''
+    return _dashboard_html()
+
+
+@app.get('/dashboard', response_class=HTMLResponse)
+def dashboard() -> str:
+    return _dashboard_html()
+
+
+@app.get('/analytics/summary')
+def get_analytics_summary() -> dict:
+    return analytics_summary()
+
+
+@app.post('/usage/manual')
+def save_manual_usage(payload: ManualUsageInput) -> dict:
+    return save_usage(
+        provider=payload.provider.strip(),
+        days_used_per_month=payload.days_used_per_month,
+        importance=payload.importance,
+        replacement=payload.replacement.strip() if payload.replacement else None,
+        notes=payload.notes,
+    )
 
 
 @app.post('/statements/analyze')
 async def analyze_uploaded_statement(file: UploadFile = File(...)):
-    report = await _analyze_file(file)
-    return report.model_dump(mode='json')
+    statement, report = await _parse_and_analyze_file(file)
+    statement_id = save_statement(statement, file.filename or 'statement.pdf')
+    data = report.model_dump(mode='json')
+    data['persisted'] = True
+    data['statement_id'] = statement_id
+    return data
 
 
 @app.post('/statements/analyze-batch')
@@ -86,25 +74,35 @@ async def analyze_uploaded_statements(files: list[UploadFile] = File(...)):
 
     file_reports = []
     reports: list[AnalysisReport] = []
+    statement_ids: list[int] = []
     for file in files:
-        report = await _analyze_file(file)
+        statement, report = await _parse_and_analyze_file(file)
+        statement_id = save_statement(statement, file.filename or 'statement.pdf')
+        statement_ids.append(statement_id)
         reports.append(report)
-        file_reports.append({'filename': file.filename, 'report': report.model_dump(mode='json')})
+        file_reports.append({'filename': file.filename, 'statement_id': statement_id, 'report': report.model_dump(mode='json')})
 
     return {
         'file_count': len(files),
+        'persisted': True,
+        'statement_ids': statement_ids,
         'files': file_reports,
         'aggregate': _aggregate_reports(reports),
     }
 
 
 async def _analyze_file(file: UploadFile) -> AnalysisReport:
+    _, report = await _parse_and_analyze_file(file)
+    return report
+
+
+async def _parse_and_analyze_file(file: UploadFile) -> tuple[Statement, AnalysisReport]:
     raw = await file.read()
     text = _extract_text(raw, file.filename or '')
     if 'DETALLE DEL CONSUMO' not in text:
         raise HTTPException(status_code=400, detail=f'No encontré DETALLE DEL CONSUMO en {file.filename}.')
     statement = parse_statement_text(text)
-    return analyze_statement(statement)
+    return statement, analyze_statement(statement)
 
 
 def _aggregate_reports(reports: list[AnalysisReport]) -> dict:
@@ -175,3 +173,171 @@ def _decode_text(raw: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise HTTPException(status_code=400, detail='No pude decodificar el archivo como texto.')
+
+
+def _dashboard_html() -> str:
+    return '''<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Personal Expenses Advisor</title>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 0; background: #0f172a; color: #e5e7eb; }
+    main { max-width: 1180px; margin: 40px auto; padding: 0 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+    .card { background: #111827; border: 1px solid #334155; border-radius: 18px; padding: 22px; box-shadow: 0 20px 60px #0008; }
+    h1 { margin: 0 0 8px; font-size: 34px; }
+    h2 { margin-top: 0; }
+    p, li { color: #cbd5e1; }
+    input, select, textarea, button { font-size: 15px; box-sizing: border-box; }
+    input, select, textarea { width: 100%; margin-top: 8px; padding: 10px; border-radius: 10px; border: 1px solid #334155; background: #020617; color: #e5e7eb; }
+    input[type=file] { padding: 18px; border: 1px dashed #64748b; }
+    label { display: block; margin-top: 10px; color: #dbeafe; }
+    button { margin-top: 14px; padding: 11px 16px; border: 0; border-radius: 12px; background: #38bdf8; color: #082f49; font-weight: 800; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; border-bottom: 1px solid #334155; text-align: left; }
+    th { color: #93c5fd; }
+    .metric { font-size: 28px; font-weight: 900; color: #7dd3fc; }
+    .hint { font-size: 14px; color: #94a3b8; }
+    pre { overflow: auto; background: #020617; border-radius: 14px; padding: 14px; border: 1px solid #334155; max-height: 260px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Personal Expenses Advisor</h1>
+    <p>Graphs, análisis, recomendaciones proactivas y comparativa de uso/costo para decidir qué mantener o dar de baja.</p>
+
+    <section class="card">
+      <h2>Cargar resúmenes</h2>
+      <p>Subí directamente los PDFs de tus tarjetas. Podés seleccionar varios meses y varias tarjetas a la vez.</p>
+      <form id="upload-form">
+        <input id="files" name="files" type="file" multiple accept=".pdf,application/pdf" />
+        <button>Analizar y guardar</button>
+      </form>
+      <p class="hint">Funciona con PDFs que tengan texto seleccionable. PDFs escaneados requieren OCR.</p>
+    </section>
+
+    <section class="grid" style="margin-top:18px">
+      <div class="card"><h2>Total ARS</h2><div class="metric" id="total-ars">-</div></div>
+      <div class="card"><h2>Total USD</h2><div class="metric" id="total-usd">-</div></div>
+      <div class="card"><h2>Resúmenes</h2><div class="metric" id="statement-count">-</div></div>
+    </section>
+
+    <section class="grid" style="margin-top:18px">
+      <div class="card"><h2>Gasto por categoría</h2><canvas id="category-chart"></canvas></div>
+      <div class="card"><h2>Gasto mensual</h2><canvas id="monthly-chart"></canvas></div>
+    </section>
+
+    <section class="card" style="margin-top:18px">
+      <h2>AI Cost Optimizer</h2>
+      <p class="hint">Cargá uso manual ahora; después se pueden agregar conectores read-only de OpenAI, Claude, Cursor, etc.</p>
+      <table>
+        <thead><tr><th>Provider</th><th>USD/mes</th><th>Días usados</th><th>USD/día usado</th><th>Decisión</th><th>Motivo</th></tr></thead>
+        <tbody id="ai-optimizer"></tbody>
+      </table>
+    </section>
+
+    <section class="grid" style="margin-top:18px">
+      <div class="card">
+        <h2>Cargar uso manual</h2>
+        <form id="usage-form">
+          <label>Provider<input id="provider" placeholder="Cursor" required /></label>
+          <label>Días usados por mes<input id="days" type="number" min="0" max="31" value="0" required /></label>
+          <label>Importancia<select id="importance"><option value="low">baja</option><option value="medium">media</option><option value="high">alta</option></select></label>
+          <label>Reemplazo posible<input id="replacement" placeholder="ChatGPT, Claude, Gemini..." /></label>
+          <label>Notas<textarea id="notes" placeholder="Uso laboral, personal, si es plan team, etc."></textarea></label>
+          <button>Guardar uso</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Recomendaciones proactivas</h2>
+        <ul id="recommendations"></ul>
+        <h2>Preguntas pendientes</h2>
+        <ul id="questions"></ul>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px">
+      <h2>Top subscriptions</h2>
+      <table><thead><tr><th>Provider</th><th>Categoría</th><th>USD</th><th>ARS</th></tr></thead><tbody id="subscriptions"></tbody></table>
+    </section>
+
+    <section class="card" style="margin-top:18px">
+      <h2>JSON crudo</h2>
+      <pre id="out">Cargando...</pre>
+    </section>
+  </main>
+
+  <script>
+    let categoryChart, monthlyChart;
+    const money = (value, currency) => new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(value || 0);
+
+    async function refresh() {
+      const summary = await fetch('/analytics/summary').then(r => r.json());
+      document.querySelector('#out').textContent = JSON.stringify(summary, null, 2);
+      document.querySelector('#total-ars').textContent = money(summary.totals.total_to_pay_ars, 'ARS');
+      document.querySelector('#total-usd').textContent = money(summary.totals.usd_balance, 'USD');
+      document.querySelector('#statement-count').textContent = summary.statement_count;
+
+      const categories = summary.category_totals.map(x => x.category);
+      const categoryUsd = summary.category_totals.map(x => x.total_usd);
+      if (categoryChart) categoryChart.destroy();
+      categoryChart = new Chart(document.querySelector('#category-chart'), {
+        type: 'doughnut',
+        data: { labels: categories, datasets: [{ label: 'USD', data: categoryUsd }] }
+      });
+
+      if (monthlyChart) monthlyChart.destroy();
+      monthlyChart = new Chart(document.querySelector('#monthly-chart'), {
+        type: 'bar',
+        data: {
+          labels: summary.monthly_totals.map(x => x.month),
+          datasets: [
+            { label: 'ARS total', data: summary.monthly_totals.map(x => x.total_to_pay_ars) },
+            { label: 'USD balance', data: summary.monthly_totals.map(x => x.usd_balance) }
+          ]
+        }
+      });
+
+      document.querySelector('#ai-optimizer').innerHTML = summary.ai_optimizer.map(item => `
+        <tr><td>${item.provider}</td><td>${money(item.monthly_cost_usd, 'USD')}</td><td>${item.days_used_per_month ?? '-'}</td><td>${item.cost_per_used_day_usd ? money(item.cost_per_used_day_usd, 'USD') : '-'}</td><td>${item.recommendation}</td><td>${item.reason}</td></tr>
+      `).join('');
+      document.querySelector('#recommendations').innerHTML = summary.recommendations.map(x => `<li>${x}</li>`).join('');
+      document.querySelector('#questions').innerHTML = summary.proactive_questions.map(x => `<li><b>${x.provider}:</b> ${x.question}</li>`).join('');
+      document.querySelector('#subscriptions').innerHTML = summary.top_subscriptions.map(x => `
+        <tr><td>${x.provider}</td><td>${x.category}</td><td>${money(x.monthly_cost_usd, 'USD')}</td><td>${money(x.monthly_cost_ars, 'ARS')}</td></tr>
+      `).join('');
+    }
+
+    document.querySelector('#upload-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData();
+      for (const file of document.querySelector('#files').files) data.append('files', file);
+      document.querySelector('#out').textContent = 'Analizando PDFs...';
+      await fetch('/statements/analyze-batch', { method: 'POST', body: data });
+      await refresh();
+    });
+
+    document.querySelector('#usage-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await fetch('/usage/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: document.querySelector('#provider').value,
+          days_used_per_month: Number(document.querySelector('#days').value),
+          importance: document.querySelector('#importance').value,
+          replacement: document.querySelector('#replacement').value || null,
+          notes: document.querySelector('#notes').value || null,
+        })
+      });
+      await refresh();
+    });
+
+    refresh();
+  </script>
+</body>
+</html>'''

@@ -1,0 +1,95 @@
+import os
+from pathlib import Path
+
+import fitz
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+SAMPLE_PATH = Path('/home/hernol/3d0c3e4c-c901-479a-89a0-ebc2e2a92418.txt')
+
+
+def sample_text() -> str:
+    return SAMPLE_PATH.read_text(encoding='utf-8')
+
+
+def sample_pdf_bytes() -> bytes:
+    doc = fitz.open()
+    lines = sample_text().splitlines()
+    for start in range(0, len(lines), 48):
+        page = doc.new_page(width=595, height=842)
+        y = 36
+        for line in lines[start:start + 48]:
+            page.insert_text((36, y), line or ' ', fontsize=8, fontname='courier')
+            y += 16
+    return doc.tobytes()
+
+
+def test_pdf_batch_persists_and_analytics_summary_drives_graphs(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    client = TestClient(app)
+    pdf = sample_pdf_bytes()
+
+    response = client.post(
+        '/statements/analyze-batch',
+        files=[
+            ('files', ('visa-2026-05.pdf', pdf, 'application/pdf')),
+            ('files', ('visa-2026-06.pdf', pdf, 'application/pdf')),
+        ],
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['persisted'] is True
+    assert len(data['statement_ids']) == 2
+
+    summary = client.get('/analytics/summary').json()
+    assert summary['statement_count'] == 2
+    assert summary['totals']['total_to_pay_ars'] == 448284.92
+    assert summary['totals']['usd_balance'] == 474.14
+    assert summary['category_totals'][0]['category'] == 'AI'
+    assert summary['category_totals'][0]['total_usd'] == 474.14
+    assert summary['monthly_totals'][0]['month'] == '2026-04'
+    assert summary['monthly_totals'][0]['total_to_pay_ars'] == 448284.92
+    assert summary['top_subscriptions'][0]['provider'] == 'Cursor'
+    assert summary['top_subscriptions'][0]['monthly_cost_usd'] == 384.0
+    assert any(question['provider'] == 'Cursor' for question in summary['proactive_questions'])
+
+
+def test_manual_usage_makes_ai_cost_optimizer_recommend_cancellation(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    client = TestClient(app)
+
+    client.post(
+        '/statements/analyze',
+        files={'file': ('visa.pdf', sample_pdf_bytes(), 'application/pdf')},
+    )
+    usage_response = client.post('/usage/manual', json={
+        'provider': 'Cursor',
+        'days_used_per_month': 3,
+        'importance': 'low',
+        'replacement': 'ChatGPT',
+        'notes': 'Lo use poco este mes',
+    })
+
+    assert usage_response.status_code == 200
+    summary = client.get('/analytics/summary').json()
+    cursor = next(item for item in summary['ai_optimizer'] if item['provider'] == 'Cursor')
+    assert cursor['monthly_cost_usd'] == 192.0
+    assert cursor['cost_per_used_day_usd'] == 64.0
+    assert cursor['recommendation'] == 'cancel_or_downgrade'
+    assert 'ChatGPT' in cursor['reason']
+
+
+def test_dashboard_serves_graphs_recommendations_and_usage_form(tmp_path, monkeypatch):
+    monkeypatch.setenv('CARD_EXPENSE_DB', str(tmp_path / 'expenses.db'))
+    client = TestClient(app)
+
+    response = client.get('/dashboard')
+
+    assert response.status_code == 200
+    assert 'Chart.js' in response.text
+    assert 'AI Cost Optimizer' in response.text
+    assert '/analytics/summary' in response.text
+    assert '/usage/manual' in response.text
+    assert 'Recomendaciones proactivas' in response.text

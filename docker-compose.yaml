@@ -2,6 +2,10 @@ services:
   personal-expenses:
     build: .
     restart: unless-stopped
+    environment:
+      CARD_EXPENSE_DB: /data/expenses.db
+    volumes:
+      - personal-expenses-data:/data
     expose:
       - "8000"
     labels:
@@ -25,3 +29,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  personal-expenses-data:
