@@ -13,6 +13,7 @@ Backend + dashboard FastAPI para analizar PDFs de resúmenes de tarjeta y decidi
 - Muestra gráficos con Chart.js: gasto mensual y gasto por categoría.
 - Tiene AI Cost Optimizer con uso manual: costo mensual, días usados, costo por día usado y recomendación.
 - Incluye What-if simulator para marcar servicios a cancelar y calcular ahorro mensual/anual en USD y ARS.
+- Permite listar y borrar resúmenes parseados para re-subirlos cuando un parseo queda mal.
 - Genera recomendaciones proactivas y preguntas pendientes por proveedor.
 - Rechaza PDFs escaneados/imagen-only con un error claro: necesitan OCR.
 

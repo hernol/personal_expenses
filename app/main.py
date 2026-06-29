@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.analysis import analyze_statement
 from app.models import AnalysisReport, Statement
 from app.parser import parse_statement_text
-from app.storage import analytics_summary, calculate_what_if, save_statement, save_usage
+from app.storage import analytics_summary, calculate_what_if, delete_statement, list_statements, save_statement, save_usage
 
 app = FastAPI(
     title='Card Expense Analyzer',
@@ -65,6 +65,18 @@ def save_manual_usage(payload: ManualUsageInput) -> dict:
 @app.post('/what-if')
 def simulate_what_if(payload: WhatIfInput) -> dict:
     return calculate_what_if(payload.cancel_providers, payload.usd_to_ars_rate)
+
+
+@app.get('/statements')
+def get_statements() -> dict:
+    return {'statements': list_statements()}
+
+
+@app.delete('/statements/{statement_id}')
+def remove_statement(statement_id: int) -> dict:
+    if not delete_statement(statement_id):
+        raise HTTPException(status_code=404, detail=f'No encontré el resumen {statement_id}.')
+    return {'deleted': True, 'statement_id': statement_id}
 
 
 @app.post('/statements/analyze')
@@ -230,6 +242,12 @@ def _dashboard_html() -> str:
       <p class="hint">Funciona con PDFs que tengan texto seleccionable. PDFs escaneados requieren OCR.</p>
     </section>
 
+    <section class="card" style="margin-top:18px">
+      <h2>Resúmenes cargados</h2>
+      <p class="hint">Si un parseo quedó mal, borrá ese resumen y volvé a subir el PDF.</p>
+      <table><thead><tr><th>ID</th><th>Archivo</th><th>Cierre</th><th>Transacciones</th><th>Total ARS</th><th></th></tr></thead><tbody id="statements"></tbody></table>
+    </section>
+
     <section class="grid" style="margin-top:18px">
       <div class="card"><h2>Total ARS</h2><div class="metric" id="total-ars">-</div></div>
       <div class="card"><h2>Total USD</h2><div class="metric" id="total-usd">-</div></div>
@@ -295,10 +313,21 @@ def _dashboard_html() -> str:
 
     async function refresh() {
       const summary = await fetch('/analytics/summary').then(r => r.json());
+      const statements = await fetch('/statements').then(r => r.json());
       document.querySelector('#out').textContent = JSON.stringify(summary, null, 2);
       document.querySelector('#total-ars').textContent = money(summary.totals.total_to_pay_ars, 'ARS');
       document.querySelector('#total-usd').textContent = money(summary.totals.usd_balance, 'USD');
       document.querySelector('#statement-count').textContent = summary.statement_count;
+      document.querySelector('#statements').innerHTML = statements.statements.map(item => `
+        <tr><td>${item.id}</td><td>${item.filename}</td><td>${item.closing_date || '-'}</td><td>${item.transaction_count}</td><td>${money(item.total_to_pay_ars, 'ARS')}</td><td><button class="delete-statement" data-id="${item.id}">Borrar</button></td></tr>
+      `).join('');
+      document.querySelectorAll('.delete-statement').forEach(button => {
+        button.addEventListener('click', async () => {
+          if (!confirm('¿Borrar este resumen parseado? Después podés volver a subir el PDF.')) return;
+          await fetch(`/statements/${button.dataset.id}`, { method: 'DELETE' });
+          await refresh();
+        });
+      });
 
       const categories = summary.category_totals.map(x => x.category);
       const categoryUsd = summary.category_totals.map(x => x.total_usd);

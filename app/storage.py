@@ -133,6 +133,33 @@ def save_usage(provider: str, days_used_per_month: int, importance: str, replace
     }
 
 
+def list_statements() -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            '''
+            SELECT s.id, s.filename, s.card_brand, s.closing_date, s.due_date,
+                   s.total_to_pay_ars, s.usd_balance, s.created_at,
+                   COUNT(t.id) AS transaction_count
+            FROM statements s
+            LEFT JOIN transactions t ON t.statement_id = s.id
+            GROUP BY s.id
+            ORDER BY s.created_at ASC, s.id ASC
+            '''
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_statement(statement_id: int) -> bool:
+    with connect() as conn:
+        exists = conn.execute('SELECT 1 FROM statements WHERE id = ?', (statement_id,)).fetchone()
+        if not exists:
+            return False
+        conn.execute('DELETE FROM transactions WHERE statement_id = ?', (statement_id,))
+        conn.execute('DELETE FROM statements WHERE id = ?', (statement_id,))
+        conn.commit()
+        return True
+
+
 def analytics_summary() -> dict[str, Any]:
     with connect() as conn:
         statements = conn.execute('SELECT * FROM statements ORDER BY closing_date, id').fetchall()
