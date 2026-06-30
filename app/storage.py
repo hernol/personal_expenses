@@ -30,6 +30,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filename TEXT NOT NULL,
             card_brand TEXT NOT NULL,
+            card_last4 TEXT,
             closing_date TEXT,
             due_date TEXT,
             total_to_pay_ars REAL,
@@ -62,18 +63,27 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
+    # Migration for existing DBs: add missing columns.
+    # (safe no-op if the column already exists)
+    try:
+        conn.execute('ALTER TABLE statements ADD COLUMN card_last4 TEXT')
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
 
 def save_statement(statement: Statement, filename: str) -> int:
     now = datetime.now(timezone.utc).isoformat()
     with connect() as conn:
         cursor = conn.execute(
             '''
-            INSERT INTO statements (filename, card_brand, closing_date, due_date, total_to_pay_ars, usd_balance, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO statements (filename, card_brand, card_last4, closing_date, due_date, total_to_pay_ars, usd_balance, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 filename,
                 statement.card_brand,
+                statement.card_last4,
                 statement.closing_date.isoformat() if statement.closing_date else None,
                 statement.due_date.isoformat() if statement.due_date else None,
                 statement.total_to_pay_ars,
@@ -137,7 +147,7 @@ def list_statements() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             '''
-            SELECT s.id, s.filename, s.card_brand, s.closing_date, s.due_date,
+            SELECT s.id, s.filename, s.card_brand, s.card_last4, s.closing_date, s.due_date,
                    s.total_to_pay_ars, s.usd_balance, s.created_at,
                    COUNT(t.id) AS transaction_count
             FROM statements s

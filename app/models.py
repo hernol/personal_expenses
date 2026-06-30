@@ -22,6 +22,9 @@ class Transaction(BaseModel):
 
 class Statement(BaseModel):
     card_brand: str
+    # Last 4 digits of the card number, when the PDF/TXT exposes them (masked or unmasked).
+    # Example: "3095".
+    card_last4: str | None = None
     closing_date: date | None = None
     due_date: date | None = None
     total_to_pay_ars: float | None = None

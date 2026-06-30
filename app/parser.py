@@ -20,15 +20,54 @@ VOUCHER_RE = re.compile(r'^\d{6}$')
 def parse_statement_text(text: str) -> Statement:
     tokens = _tokens(text)
     card_brand = 'VISA' if any('VISA' in token.upper() for token in tokens[:20]) else 'UNKNOWN'
+    card_last4 = _find_card_last4(tokens)
     transactions = _parse_transactions(tokens)
     return Statement(
         card_brand=card_brand,
+        card_last4=card_last4,
         closing_date=_find_closing_date(tokens),
         due_date=_find_due_date(tokens),
         total_to_pay_ars=_find_amount_after(tokens, 'TOTAL A PAGAR'),
         usd_balance=_find_usd_balance(transactions, tokens),
         transactions=transactions,
     )
+
+
+def _find_card_last4(tokens: list[str]) -> str | None:
+    """Try to extract the last 4 digits of the card number.
+
+    In these bank statements it often appears near lines that include "TARJETA"
+    (e.g. "TARJETA 3095 Total Consumos ..."). Sometimes the extractor may show
+    it as masked digits or embedded with other text.
+    """
+    # 1) Prefer lines containing "TARJETA".
+    for idx, token in enumerate(tokens[:120]):
+        t = token.upper()
+        if 'TARJETA' not in t and 'CARD' not in t:
+            continue
+        # Take the last 4-digit group in the line (avoid years like 2026 by
+        # relying on the surrounding label).
+        matches = re.findall(r'\b(\d{4})\b', token)
+        if matches:
+            return matches[-1]
+        # Also handle cases with masked patterns like "**** 1234".
+        masked = re.findall(r'(?:\*+|X+)\s*(\d{4})', token, flags=re.IGNORECASE)
+        if masked:
+            return masked[-1]
+
+    # 2) Fallback: search globally for masked patterns.
+    masked_all = re.findall(r'(?:\*+|X+)\s*(\d{4})', '\n'.join(tokens), flags=re.IGNORECASE)
+    if masked_all:
+        return masked_all[-1]
+
+    # 3) Last fallback: sometimes the number appears as a bare last4 near 'CUENTA'.
+    for token in tokens[:120]:
+        if 'CUENTA' not in token.upper():
+            continue
+        matches = re.findall(r'\b(\d{4})\b', token)
+        if matches:
+            return matches[-1]
+    return None
 
 
 def _tokens(text: str) -> list[str]:

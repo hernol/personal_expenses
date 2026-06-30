@@ -252,7 +252,7 @@ def _dashboard_html() -> str:
       <h2>Resúmenes cargados</h2>
       <p class="hint">Si un parseo quedó mal, borrá ese resumen y volvé a subir el PDF.</p>
       <button id="delete-all-statements">Borrar todos</button>
-      <table><thead><tr><th>ID</th><th>Archivo</th><th>Cierre</th><th>Transacciones</th><th>Total ARS</th><th></th></tr></thead><tbody id="statements"></tbody></table>
+      <table><thead><tr><th>ID</th><th>Archivo</th><th>Cierre</th><th>Vence</th><th>Tarjeta (últ.4)</th><th>Transacciones</th><th>Total ARS</th><th></th></tr></thead><tbody id="statements"></tbody></table>
     </section>
 
     <section class="grid" style="margin-top:18px">
@@ -326,7 +326,16 @@ def _dashboard_html() -> str:
       document.querySelector('#total-usd').textContent = money(summary.totals.usd_balance, 'USD');
       document.querySelector('#statement-count').textContent = summary.statement_count;
       document.querySelector('#statements').innerHTML = statements.statements.map(item => `
-        <tr><td>${item.id}</td><td>${item.filename}</td><td>${item.closing_date || '-'}</td><td>${item.transaction_count}</td><td>${money(item.total_to_pay_ars, 'ARS')}</td><td><button class="delete-statement" data-id="${item.id}">Borrar</button></td></tr>
+        <tr>
+          <td>${item.id}</td>
+          <td>${item.filename}</td>
+          <td>${item.closing_date || '-'}</td>
+          <td>${item.due_date || '-'}</td>
+          <td>${item.card_last4 ? ('**** ' + item.card_last4) : '-'}</td>
+          <td>${item.transaction_count}</td>
+          <td>${money(item.total_to_pay_ars, 'ARS')}</td>
+          <td><button class="delete-statement" data-id="${item.id}">Borrar</button></td>
+        </tr>
       `).join('');
       document.querySelectorAll('.delete-statement').forEach(button => {
         button.addEventListener('click', async () => {
