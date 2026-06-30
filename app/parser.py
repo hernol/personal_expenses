@@ -96,6 +96,17 @@ def _find_card_last4(tokens: list[str]) -> str | None:
             if cands:
                 return cands[0]
 
+    # Some PDFs may show last4 as two groups of two digits separated
+    # by spaces/hyphens (e.g. "30 04"). Try this only in the vicinity of
+    # TARJETA occurrences to avoid grabbing unrelated numbers elsewhere.
+    for idx in tarjeta_idxs:
+        window_text = ' '.join(tokens[idx: min(len(tokens), idx + 25)])
+        pair_cands = re.findall(r'(\d{2})\D+(\d{2})', window_text)
+        for a, b in reversed(pair_cands):
+            cand = a + b
+            if _is_plausible_last4(cand):
+                return cand
+
     # 2) Fallback: scan whole document for masked patterns.
     masked_all = re.findall(r'(?:\*+|X+)\s*(\d{4})', '\n'.join(tokens), flags=re.IGNORECASE)
     for cand in reversed(masked_all):
