@@ -14,7 +14,11 @@ DATE_RE = re.compile(r'^\d{2}-\d{2}-\d{2}$')
 MONTH_DATE_RE = re.compile(r'^(\d{2})-([A-Za-zÁÉÍÓÚáéíóú]{3})-(\d{2})$')
 AMOUNT_RE = re.compile(r'^-?\d{1,3}(?:\.\d{3})*,\d{2}$|^-?\d+,\d{2}$')
 INSTALLMENT_RE = re.compile(r'^\d{2}/\d{2}$')
+# Voucher/comprobante often appears as a 6-digit number.
+# We'll keep this strict for the "amount pairing" heuristics, and handle
+# 5-digit vouchers separately where we assign the voucher value.
 VOUCHER_RE = re.compile(r'^\d{6}$')
+VOUCHER_SHORT_RE = re.compile(r'^\d{5}$')
 
 
 def parse_statement_text(text: str) -> Statement:
@@ -181,7 +185,10 @@ def _parse_transactions(tokens: list[str]) -> list[Transaction]:
             merchant=pending['merchant'],
             amount=amount[0],
             currency=Currency.USD,
-            voucher=voucher[1],
+            # In some extracts the voucher is adjacent to the first amount pair
+            # (e.g. "00454" right before "19,99"). In others it's paired on the
+            # next tuple. Prefer the voucher attached to the chosen amount.
+            voucher=amount[1] or voucher[1],
             raw=f"{pending['date']} | {pending['merchant']} | {amount[0]} USD",
         ))
 
@@ -195,8 +202,10 @@ def _usd_amounts_after_descriptions(block: list[str]) -> list[tuple[float, str |
     result: list[tuple[float, str | None]] = []
     for i, token in enumerate(block[first_amount_index:], first_amount_index):
         if _is_amount(token):
-            prev = block[i - 1] if i > 0 and VOUCHER_RE.match(block[i - 1]) else None
-            nxt = block[i + 1] if i + 1 < len(block) and VOUCHER_RE.match(block[i + 1]) else None
+            prev_token = block[i - 1] if i > 0 else None
+            nxt_token = block[i + 1] if i + 1 < len(block) else None
+            prev = prev_token if (prev_token and (VOUCHER_RE.match(prev_token) or VOUCHER_SHORT_RE.match(prev_token))) else None
+            nxt = nxt_token if (nxt_token and (VOUCHER_RE.match(nxt_token) or VOUCHER_SHORT_RE.match(nxt_token))) else None
             result.append((_parse_amount(token), prev or nxt))
     return result
 
