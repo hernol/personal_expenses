@@ -143,13 +143,15 @@ def _parse_transactions(tokens: list[str]) -> list[Transaction]:
     i = 0
     while i < len(block):
         token = block[i]
-        if not DATE_RE.match(token):
+        if not (DATE_RE.match(token) or MONTH_DATE_RE.match(token)):
             i += 1
             continue
 
+        parsed_date = _parse_month_date(token) if MONTH_DATE_RE.match(token) else _parse_numeric_date(token)
+
         if i + 5 < len(block) and block[i + 1] == '*' and INSTALLMENT_RE.match(block[i + 3]) and VOUCHER_RE.match(block[i + 4]) and _is_amount(block[i + 5]):
             transactions.append(Transaction(
-                date=_parse_numeric_date(token),
+                date=parsed_date,
                 merchant=_clean_merchant(block[i + 2]),
                 installment=block[i + 3],
                 voucher=block[i + 4],
@@ -164,11 +166,11 @@ def _parse_transactions(tokens: list[str]) -> list[Transaction]:
         # then amount/voucher/amount triplets. Capture descriptions and pair later.
         merchant_parts: list[str] = []
         j = i + 1
-        while j < len(block) and not DATE_RE.match(block[j]) and not _is_amount(block[j]):
+        while j < len(block) and not (DATE_RE.match(block[j]) or MONTH_DATE_RE.match(block[j])) and not _is_amount(block[j]):
             merchant_parts.append(block[j])
             j += 1
         if merchant_parts:
-            usd_pending.append({'date': _parse_numeric_date(token), 'merchant': _clean_merchant(' '.join(merchant_parts))})
+            usd_pending.append({'date': parsed_date, 'merchant': _clean_merchant(' '.join(merchant_parts))})
         i = j
 
     amounts = _usd_amounts_after_descriptions(block)
