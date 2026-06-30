@@ -155,6 +155,12 @@ def _find_usd_balance(transactions: list[Transaction], tokens: list[str]) -> flo
         s = re.sub(r'\s+', ' ', s)
         return s
 
+    def _extract_amount_maybe(token: str) -> float | None:
+        # Some PDF extractors embed currency symbols in the same line,
+        # e.g. "$ 237,07" or "237,07 USD".
+        m = AMOUNT_RE.search(token)
+        return _parse_amount(m.group(0)) if m else None
+
     total_indices: list[int] = []
     for i, t in enumerate(tokens):
         nt = _norm_label(t)
@@ -166,8 +172,9 @@ def _find_usd_balance(transactions: list[Transaction], tokens: list[str]) -> flo
         window = tokens[i + 1:i + 80]
         amounts: list[float] = []
         for candidate in window:
-            if _is_amount(candidate):
-                amounts.append(_parse_amount(candidate))
+            v = _extract_amount_maybe(candidate)
+            if v is not None:
+                amounts.append(v)
         if amounts:
             return round(amounts[-1], 2)
 
@@ -175,8 +182,9 @@ def _find_usd_balance(transactions: list[Transaction], tokens: list[str]) -> flo
     for i, token in enumerate(tokens[:-1]):
         if _norm_label(token) == 'DOLARES':
             for candidate in tokens[i + 1:i + 10]:
-                if _is_amount(candidate):
-                    return round(_parse_amount(candidate), 2)
+                v = _extract_amount_maybe(candidate)
+                if v is not None:
+                    return round(v, 2)
     return None
 
 
