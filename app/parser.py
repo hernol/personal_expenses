@@ -40,33 +40,76 @@ def _find_card_last4(tokens: list[str]) -> str | None:
     (e.g. "TARJETA 3095 Total Consumos ..."). Sometimes the extractor may show
     it as masked digits or embedded with other text.
     """
-    # 1) Prefer lines containing "TARJETA".
-    for idx, token in enumerate(tokens[:120]):
-        t = token.upper()
-        if 'TARJETA' not in t and 'CARD' not in t:
+    # Small exclusions: avoid grabbing years and a few known contact/toll numbers.
+    excluded = {
+        '0000',
+        '0800',
+        '1000',
+        '7528',
+        '4379',
+        '6200',
+    }
+
+    def _is_plausible_last4(x: str) -> bool:
+        if x in excluded:
+            return False
+        # Drop obvious years like 2026/2025/2024
+        if x.startswith('20'):
+            return False
+        return True
+
+    # 1) Prefer regions near "TARJETA".
+    tarjeta_idxs = [i for i, tok in enumerate(tokens) if 'TARJETA' in tok.upper()]
+    for idx in tarjeta_idxs:
+        tok0 = tokens[idx]
+        t0u = tok0.upper()
+
+        # Many PDFs also have a "Tarjeta Crédito VISA" header early on.
+        # We want the line that includes the masked/unmasked last4, usually in
+        # the same line as "TARJETA" + "Total Consumos".
+        looks_like_statement_card_line = (
+            ('TOTAL' in t0u) or ('CONSUMO' in t0u) or ('CONSUMOS' in t0u)
+        )
+        # If this TARJETA occurrence doesn't look like the card-summary line,
+        # skip it to avoid grabbing unrelated 4-digit chunks (e.g. CUIT parts).
+        if not looks_like_statement_card_line and not re.search(r'(?:\*+|X+)\s*\d{4}', tok0, flags=re.IGNORECASE) and not re.search(r'\d{4}', tok0):
             continue
-        # Take the last 4-digit group in the line (avoid years like 2026 by
-        # relying on the surrounding label).
-        matches = re.findall(r'\b(\d{4})\b', token)
-        if matches:
-            return matches[-1]
-        # Also handle cases with masked patterns like "**** 1234".
-        masked = re.findall(r'(?:\*+|X+)\s*(\d{4})', token, flags=re.IGNORECASE)
-        if masked:
-            return masked[-1]
 
-    # 2) Fallback: search globally for masked patterns.
+        # Prefer digits already inside the TARJETA line.
+        masked0 = re.findall(r'(?:\*+|X+)\s*(\d{4})', tok0, flags=re.IGNORECASE)
+        for cand in masked0:
+            if _is_plausible_last4(cand):
+                return cand
+        cands0 = [c for c in re.findall(r'(\d{4})', tok0) if _is_plausible_last4(c)]
+        if cands0:
+            return cands0[0]
+
+        # Otherwise, look shortly after TARJETA (but still close to the card summary).
+        for j in range(idx + 1, min(len(tokens), idx + 8)):
+            tok = tokens[j]
+            masked = re.findall(r'(?:\*+|X+)\s*(\d{4})', tok, flags=re.IGNORECASE)
+            for cand in masked:
+                if _is_plausible_last4(cand):
+                    return cand
+
+            cands = [c for c in re.findall(r'(\d{4})', tok) if _is_plausible_last4(c)]
+            if cands:
+                return cands[0]
+
+    # 2) Fallback: scan whole document for masked patterns.
     masked_all = re.findall(r'(?:\*+|X+)\s*(\d{4})', '\n'.join(tokens), flags=re.IGNORECASE)
-    if masked_all:
-        return masked_all[-1]
+    for cand in reversed(masked_all):
+        if _is_plausible_last4(cand):
+            return cand
 
-    # 3) Last fallback: sometimes the number appears as a bare last4 near 'CUENTA'.
-    for token in tokens[:120]:
+    # 3) Last fallback: sometimes it appears near 'CUENTA'.
+    for token in tokens:
         if 'CUENTA' not in token.upper():
             continue
-        matches = re.findall(r'\b(\d{4})\b', token)
-        if matches:
-            return matches[-1]
+        cands = [c for c in re.findall(r'(\d{4})', token) if _is_plausible_last4(c)]
+        if cands:
+            return cands[-1]
+
     return None
 
 
