@@ -136,25 +136,40 @@ def _find_amount_after(tokens: list[str], label: str) -> float | None:
 
 
 def _find_usd_balance(transactions: list[Transaction], tokens: list[str]) -> float | None:
-    # Prefer parsed USD purchases when we have them.
+    # Prefer parsed USD rows when we have them.
     usd_total = round(sum(tx.amount for tx in transactions if tx.currency == Currency.USD), 2)
     if usd_total:
         return usd_total
 
-    # Fallback for banks/PDF layouts where USD detail rows are not parsed yet but
-    # the summary exposes a current dollar balance. Keep this deliberately
-    # conservative: values over 1000 are often credit limits (e.g. 35.000,00) or
-    # table artifacts, not monthly spend for this user's cards.
-    candidates: list[float] = []
+    # Fallback: most PDFs expose the current USD balance right next to
+    # "TOTAL A PAGAR" as a PESOS + DÓLARES pair.
+    # Example (line-by-line extraction):
+    #   TOTAL A PAGAR
+    #   224.142,46   (PESOS)
+    #   ...
+    #   237,07        (DÓLARES)
+    last_usd: float | None = None
+    for i, token in enumerate(tokens):
+        if token != 'TOTAL A PAGAR':
+            continue
+        amounts: list[float] = []
+        for candidate in tokens[i + 1:i + 18]:
+            if _is_amount(candidate):
+                amounts.append(_parse_amount(candidate))
+        if len(amounts) >= 2:
+            last_usd = round(amounts[1], 2)
+
+    if last_usd is not None:
+        return last_usd
+
+    # Last resort: scan for a standalone "DÓLARES" label.
     for i, token in enumerate(tokens[:-1]):
         if token == 'DÓLARES':
             for candidate in tokens[i + 1:i + 4]:
                 if _is_amount(candidate):
                     value = _parse_amount(candidate)
-                    if 0 < value <= 1000:
-                        candidates.append(value)
-                    break
-    return candidates[-1] if candidates else None
+                    return round(value, 2)
+    return None
 
 
 def _is_amount(token: str) -> bool:

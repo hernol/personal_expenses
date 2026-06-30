@@ -196,10 +196,12 @@ def analytics_summary() -> dict[str, Any]:
 
     usd_balance_by_statement = {row['statement_id']: round(row['usd_balance'] or 0, 2) for row in usd_balance_rows}
     # Backward-compatible cleanup for statements imported before the parser fix:
-    # keep small legacy USD balances when no USD transactions were parsed, but
-    # discard huge values that are likely credit limits or column/table artifacts.
+    # keep legacy USD balances when no USD transactions were parsed.
+    #
+    # We allow reasonably large USD balances (your statements often have amounts
+    # well above 1,000 USD) while still rejecting obvious artifacts.
     for row in statements:
-        if row['id'] not in usd_balance_by_statement and 0 < (row['usd_balance'] or 0) <= 1000:
+        if row['id'] not in usd_balance_by_statement and 0 < (row['usd_balance'] or 0) <= 200000:
             usd_balance_by_statement[row['id']] = round(row['usd_balance'], 2)
     usage_by_provider = {row['provider']: dict(row) for row in usage_rows}
     category_totals = _category_totals(category_rows)
