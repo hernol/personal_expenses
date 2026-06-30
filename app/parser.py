@@ -143,32 +143,40 @@ def _find_usd_balance(transactions: list[Transaction], tokens: list[str]) -> flo
 
     # Fallback: most PDFs expose the current USD balance right next to
     # "TOTAL A PAGAR" as a PESOS + DÓLARES pair.
-    # Example (line-by-line extraction):
-    #   TOTAL A PAGAR
-    #   224.142,46   (PESOS)
-    #   ...
-    #   237,07        (DÓLARES)
-    last_usd: float | None = None
-    for i, token in enumerate(tokens):
-        if token != 'TOTAL A PAGAR':
-            continue
+    #
+    # Robustness: PDF text extraction varies (accents, whitespace, casing).
+    # So we normalize labels before matching.
+    import unicodedata
+
+    def _norm_label(s: str) -> str:
+        s = s.upper().strip()
+        s = unicodedata.normalize('NFD', s)
+        s = ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')  # drop diacritics
+        s = re.sub(r'\s+', ' ', s)
+        return s
+
+    total_indices: list[int] = []
+    for i, t in enumerate(tokens):
+        nt = _norm_label(t)
+        if nt == 'TOTAL A PAGAR' or ('TOTAL' in nt and 'PAGAR' in nt):
+            total_indices.append(i)
+
+    if total_indices:
+        i = total_indices[-1]
+        window = tokens[i + 1:i + 80]
         amounts: list[float] = []
-        for candidate in tokens[i + 1:i + 18]:
+        for candidate in window:
             if _is_amount(candidate):
                 amounts.append(_parse_amount(candidate))
-        if len(amounts) >= 2:
-            last_usd = round(amounts[1], 2)
-
-    if last_usd is not None:
-        return last_usd
+        if amounts:
+            return round(amounts[-1], 2)
 
     # Last resort: scan for a standalone "DÓLARES" label.
     for i, token in enumerate(tokens[:-1]):
-        if token == 'DÓLARES':
-            for candidate in tokens[i + 1:i + 4]:
+        if _norm_label(token) == 'DOLARES':
+            for candidate in tokens[i + 1:i + 10]:
                 if _is_amount(candidate):
-                    value = _parse_amount(candidate)
-                    return round(value, 2)
+                    return round(_parse_amount(candidate), 2)
     return None
 
 
